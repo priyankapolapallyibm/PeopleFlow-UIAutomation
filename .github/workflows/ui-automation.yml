@@ -1,56 +1,279 @@
+# =============================================================================
+# PeopleFlow UI Automation Pipeline
+#
+# Triggers:
+#   - Auto: push to main (runs full Regression suite)
+#   - Auto: pull_request to main (runs Smoke suite)
+#   - Manual (workflow_dispatch): run by Tag / Feature file / Branch
+#
+# On failure (push to main only):
+#   - Auto-reverts the last merged PR commit
+#   - Re-triggers the pipeline to confirm green state after revert
+# =============================================================================
+
 name: PeopleFlow UI Automation
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main ]
+
   pull_request:
     branches: [ main ]
+    types: [ opened, synchronize, reopened ]
+
   workflow_dispatch:
     inputs:
-      tags:
-        description: 'Run specific tags (e.g. @Smoke or @US-294)'
-        default: '@Smoke'
+      run_mode:
+        description: 'Filter mode — run tests by Tag, Feature, or All'
+        required: true
+        default: 'Tag'
+        type: choice
+        options:
+          - Tag
+          - Feature
+          - All
 
+      tag_filter:
+        description: 'Tag to run (used when run_mode=Tag). Examples: Smoke | Regression | US-294 | TC-294-01'
+        required: false
+        default: 'Regression'
+
+      feature_filter:
+        description: 'Feature file name to run (used when run_mode=Feature). Examples: Login | Dashboard | Employee | Leave | Recruitment'
+        required: false
+        default: 'Login'
+
+      target_branch:
+        description: 'Branch to run tests against'
+        required: false
+        default: 'main'
+
+      headless:
+        description: 'Run browser in headless mode'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  PROJECT_PATH: src/PeopleFlow.UIAutomation/PeopleFlow.UIAutomation.csproj
+  APP_BASE_URL: http://localhost:80
+  APP_API_URL: http://localhost:3000/api
+
+# ─────────────────────────────────────────────────────────────────────────────
 jobs:
+
+# ─── JOB 1: Build & Run Tests ────────────────────────────────────────────────
   ui-tests:
+    name: UI Tests (${{ github.event_name == 'workflow_dispatch' && inputs.run_mode || github.event_name == 'pull_request' && 'Smoke' || 'Regression' }})
     runs-on: ubuntu-latest
 
-    steps:
-      - uses: actions/checkout@v4
+    outputs:
+      test_outcome: ${{ steps.run_tests.outcome }}
 
-      - name: Setup .NET 8
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_branch || github.ref }}
+          fetch-depth: 0
+
+      - name: Setup .NET ${{ env.DOTNET_VERSION }}
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: ${{ runner.os }}-nuget-
 
       - name: Restore dependencies
-        run: dotnet restore src/PeopleFlow.UIAutomation/PeopleFlow.UIAutomation.csproj
+        run: dotnet restore ${{ env.PROJECT_PATH }}
 
       - name: Build
-        run: dotnet build src/PeopleFlow.UIAutomation/PeopleFlow.UIAutomation.csproj --no-restore
+        run: dotnet build ${{ env.PROJECT_PATH }} --no-restore --configuration Release
 
       - name: Install Playwright browsers
         run: |
-          cd src/PeopleFlow.UIAutomation
-          pwsh bin/Debug/net8.0/playwright.ps1 install --with-deps chromium
+          dotnet tool install --global Microsoft.Playwright.CLI --version 1.44.0 || true
+          pwsh src/PeopleFlow.UIAutomation/bin/Release/net8.0/playwright.ps1 install --with-deps chromium
+
+      # ── Determine test filter ──────────────────────────────────────────────
+      - name: Resolve test filter
+        id: filter
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "filter=Category=Regression" >> $GITHUB_OUTPUT
+            echo "suite=Regression (auto - push to main)" >> $GITHUB_OUTPUT
+
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "filter=Category=Smoke" >> $GITHUB_OUTPUT
+            echo "suite=Smoke (auto - pull request)" >> $GITHUB_OUTPUT
+
+          elif [ "${{ inputs.run_mode }}" = "Tag" ]; then
+            echo "filter=Category=${{ inputs.tag_filter }}" >> $GITHUB_OUTPUT
+            echo "suite=Tag: ${{ inputs.tag_filter }}" >> $GITHUB_OUTPUT
+
+          elif [ "${{ inputs.run_mode }}" = "Feature" ]; then
+            echo "filter=FullyQualifiedName~${{ inputs.feature_filter }}" >> $GITHUB_OUTPUT
+            echo "suite=Feature: ${{ inputs.feature_filter }}" >> $GITHUB_OUTPUT
+
+          else
+            echo "filter=" >> $GITHUB_OUTPUT
+            echo "suite=All test cases" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Print run config
+        run: |
+          echo "====================================="
+          echo "Suite  : ${{ steps.filter.outputs.suite }}"
+          echo "Filter : ${{ steps.filter.outputs.filter }}"
+          echo "Branch : ${{ inputs.target_branch || github.ref_name }}"
+          echo "Headless: ${{ inputs.headless || 'true' }}"
+          echo "====================================="
 
       - name: Run UI Tests
+        id: run_tests
+        continue-on-error: true
         env:
-          AppSettings__Headless: true
-          AppSettings__BaseUrl: http://localhost:80
-          AppSettings__ApiBaseUrl: http://localhost:3000/api
+          AppSettings__Headless: ${{ inputs.headless || 'true' }}
+          AppSettings__BaseUrl: ${{ env.APP_BASE_URL }}
+          AppSettings__ApiBaseUrl: ${{ env.APP_API_URL }}
         run: |
-          dotnet test src/PeopleFlow.UIAutomation/PeopleFlow.UIAutomation.csproj \
-            --no-build \
-            --logger "trx;LogFileName=test-results.trx" \
-            --filter "Category=${{ github.event.inputs.tags || 'Smoke' }}" \
-            -e AppSettings__Headless=true
+          FILTER="${{ steps.filter.outputs.filter }}"
+          if [ -n "$FILTER" ]; then
+            dotnet test ${{ env.PROJECT_PATH }} \
+              --no-build \
+              --configuration Release \
+              --logger "trx;LogFileName=test-results.trx" \
+              --logger "console;verbosity=normal" \
+              --results-directory TestResults \
+              --filter "$FILTER"
+          else
+            dotnet test ${{ env.PROJECT_PATH }} \
+              --no-build \
+              --configuration Release \
+              --logger "trx;LogFileName=test-results.trx" \
+              --logger "console;verbosity=normal" \
+              --results-directory TestResults
+          fi
 
-      - name: Upload Test Results
+      - name: Publish Test Results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Test Report — ${{ steps.filter.outputs.suite }}
+          path: TestResults/*.trx
+          reporter: dotnet-trx
+          fail-on-error: false
+
+      - name: Upload test artifacts
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: test-results
+          name: test-results-${{ github.run_number }}
+          retention-days: 30
           path: |
             TestResults/
             allure-results/
+
+      - name: Upload screenshots on failure
+        uses: actions/upload-artifact@v4
+        if: steps.run_tests.outcome == 'failure'
+        with:
+          name: screenshots-${{ github.run_number }}
+          retention-days: 7
+          path: TestResults/Screenshots/
+
+      - name: Fail pipeline if tests failed
+        if: steps.run_tests.outcome == 'failure'
+        run: |
+          echo "❌ Tests failed. Pipeline is marked as FAILED."
+          exit 1
+
+# ─── JOB 2: Auto-Revert on Failure (push to main only) ───────────────────────
+  auto-revert:
+    name: Auto-Revert Last PR on Test Failure
+    runs-on: ubuntu-latest
+    needs: ui-tests
+    # Only run on push to main, only when tests failed
+    if: |
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.ui-tests.result == 'failure'
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 10
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Identify the failing commit
+        id: commit_info
+        run: |
+          COMMIT_SHA="${{ github.sha }}"
+          COMMIT_MSG=$(git log -1 --pretty=%s $COMMIT_SHA)
+          PARENT_SHA=$(git log -1 --pretty=%P $COMMIT_SHA | awk '{print $1}')
+          echo "commit_sha=$COMMIT_SHA"   >> $GITHUB_OUTPUT
+          echo "commit_msg=$COMMIT_MSG"   >> $GITHUB_OUTPUT
+          echo "parent_sha=$PARENT_SHA"   >> $GITHUB_OUTPUT
+          echo "Failing commit : $COMMIT_SHA"
+          echo "Message        : $COMMIT_MSG"
+          echo "Reverting to   : $PARENT_SHA"
+
+      - name: Revert the failing commit
+        run: |
+          git revert --no-edit ${{ steps.commit_info.outputs.commit_sha }}
+
+      - name: Push revert to main
+        run: |
+          git push origin main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Post failure summary
+        run: |
+          echo "## ❌ Test Failure — Auto-Revert Applied" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Failed Commit | \`${{ steps.commit_info.outputs.commit_sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Message | ${{ steps.commit_info.outputs.commit_msg }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Action | Reverted via \`git revert\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Next | Pipeline re-triggered automatically on revert push |" >> $GITHUB_STEP_SUMMARY
+
+# ─── JOB 3: Post-revert verification summary ─────────────────────────────────
+  pipeline-summary:
+    name: Pipeline Summary
+    runs-on: ubuntu-latest
+    needs: [ ui-tests, auto-revert ]
+    if: always()
+
+    steps:
+      - name: Write pipeline summary
+        run: |
+          echo "## 🧪 PeopleFlow UI Automation Pipeline" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| | |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Trigger** | \`${{ github.event_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Branch** | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Commit** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Tests** | ${{ needs.ui-tests.result == 'success' && '✅ PASSED' || '❌ FAILED' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Auto-revert** | ${{ needs.auto-revert.result == 'success' && '↩️ Reverted' || needs.auto-revert.result == 'skipped' && '➖ Skipped (tests passed)' || '⚠️ Revert attempted' }} |" >> $GITHUB_STEP_SUMMARY

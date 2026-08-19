@@ -1,0 +1,159 @@
+# =============================================================================
+# Manual Test Run — by Tag | Feature | Branch
+#
+# Go to Actions → "Manual Test Run" → Run workflow
+# Choose: run_mode, tag_filter, feature_filter, branch, headless
+# =============================================================================
+
+name: Manual Test Run
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_mode:
+        description: 'Filter tests by'
+        required: true
+        default: 'Tag'
+        type: choice
+        options:
+          - Tag
+          - Feature
+          - All
+
+      tag_filter:
+        description: |
+          Tag to run (run_mode=Tag). Options:
+          Smoke | Regression | UI | API | Integration |
+          US-293 | US-294 | US-296 | US-303 | US-304 | US-308 | US-312 | US-313 |
+          TC-294-01 | TC-296-01 | TC-303-01 | ...
+        required: false
+        default: 'Regression'
+
+      feature_filter:
+        description: |
+          Feature name (run_mode=Feature). Options:
+          Login | Dashboard | EmployeeList | EmployeeCRUD | LeaveManagement | Recruitment
+        required: false
+        default: 'Login'
+
+      branch:
+        description: 'Branch to run tests on'
+        required: false
+        default: 'main'
+
+      headless:
+        description: 'Headless browser mode'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  PROJECT_PATH: src/PeopleFlow.UIAutomation/PeopleFlow.UIAutomation.csproj
+
+jobs:
+  manual-run:
+    name: Manual — ${{ inputs.run_mode }} [${{ inputs.tag_filter || inputs.feature_filter || 'All' }}] on ${{ inputs.branch }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Cache NuGet
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+
+      - name: Restore & Build
+        run: |
+          dotnet restore ${{ env.PROJECT_PATH }}
+          dotnet build ${{ env.PROJECT_PATH }} --no-restore --configuration Release
+
+      - name: Install Playwright browsers
+        run: |
+          pwsh src/PeopleFlow.UIAutomation/bin/Release/net8.0/playwright.ps1 install --with-deps chromium
+
+      - name: Resolve filter
+        id: filter
+        run: |
+          if [ "${{ inputs.run_mode }}" = "Tag" ]; then
+            echo "filter=Category=${{ inputs.tag_filter }}" >> $GITHUB_OUTPUT
+            echo "label=Tag: ${{ inputs.tag_filter }}" >> $GITHUB_OUTPUT
+          elif [ "${{ inputs.run_mode }}" = "Feature" ]; then
+            echo "filter=FullyQualifiedName~${{ inputs.feature_filter }}" >> $GITHUB_OUTPUT
+            echo "label=Feature: ${{ inputs.feature_filter }}" >> $GITHUB_OUTPUT
+          else
+            echo "filter=" >> $GITHUB_OUTPUT
+            echo "label=All Tests" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Print run summary
+        run: |
+          echo "======================================="
+          echo " Branch  : ${{ inputs.branch }}"
+          echo " Mode    : ${{ inputs.run_mode }}"
+          echo " Filter  : $(cat $GITHUB_OUTPUT | grep '^label=' | cut -d= -f2-)"
+          echo " Headless: ${{ inputs.headless }}"
+          echo "======================================="
+
+      - name: Run Tests
+        env:
+          AppSettings__Headless: ${{ inputs.headless }}
+          AppSettings__BaseUrl: http://localhost:80
+          AppSettings__ApiBaseUrl: http://localhost:3000/api
+        run: |
+          FILTER="${{ steps.filter.outputs.filter }}"
+          if [ -n "$FILTER" ]; then
+            dotnet test ${{ env.PROJECT_PATH }} \
+              --no-build --configuration Release \
+              --filter "$FILTER" \
+              --logger "trx;LogFileName=manual-results.trx" \
+              --logger "console;verbosity=normal" \
+              --results-directory TestResults
+          else
+            dotnet test ${{ env.PROJECT_PATH }} \
+              --no-build --configuration Release \
+              --logger "trx;LogFileName=manual-results.trx" \
+              --logger "console;verbosity=normal" \
+              --results-directory TestResults
+          fi
+
+      - name: Publish results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Manual Run — ${{ steps.filter.outputs.label }}
+          path: TestResults/*.trx
+          reporter: dotnet-trx
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: manual-run-${{ github.run_number }}
+          retention-days: 14
+          path: |
+            TestResults/
+            TestResults/Screenshots/
+
+      - name: Write summary
+        if: always()
+        run: |
+          echo "## 🧪 Manual Test Run" >> $GITHUB_STEP_SUMMARY
+          echo "| | |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Branch** | \`${{ inputs.branch }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Mode** | ${{ inputs.run_mode }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Filter** | ${{ steps.filter.outputs.label }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Headless** | ${{ inputs.headless }} |" >> $GITHUB_STEP_SUMMARY
