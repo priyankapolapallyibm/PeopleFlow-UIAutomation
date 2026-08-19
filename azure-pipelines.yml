@@ -59,6 +59,350 @@ variables:
   buildConfig: 'Release'
   appBaseUrl: 'http://localhost:80'
   appApiUrl: 'http://localhost:3000/api'
+  NUGET_PACKAGES: $(Pipeline.Workspace)/.nuget/packages
+
+# ── Stages ───────────────────────────────────────────────────────────────────
+stages:
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STAGE 1 — Build
+# ═══════════════════════════════════════════════════════════════════════════
+- stage: Build
+  displayName: '🔨 Build'
+  jobs:
+  - job: BuildJob
+    displayName: 'Restore & Build'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+
+    - task: UseDotNet@2
+      displayName: 'Use .NET $(dotnetVersion)'
+      inputs:
+        packageType: sdk
+        version: $(dotnetVersion)
+
+    - task: Cache@2
+      displayName: 'Cache NuGet packages'
+      inputs:
+        key: 'nuget | "$(Agent.OS)" | $(projectPath)'
+        restoreKeys: |
+          nuget | "$(Agent.OS)"
+        path: $(NUGET_PACKAGES)
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Restore dependencies'
+      inputs:
+        command: restore
+        projects: $(projectPath)
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Build solution'
+      inputs:
+        command: build
+        projects: $(projectPath)
+        arguments: '--no-restore --configuration $(buildConfig)'
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish build artifact'
+      inputs:
+        targetPath: src/PeopleFlow.UIAutomation/bin/$(buildConfig)/net8.0
+        artifact: 'build-output'
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STAGE 2 — Test
+# ═══════════════════════════════════════════════════════════════════════════
+- stage: Test
+  displayName: '🧪 Run Tests'
+  dependsOn: Build
+  condition: succeeded()
+  jobs:
+  - job: TestJob
+    displayName: 'UI Tests'
+    pool:
+      vmImage: 'ubuntu-latest'
+
+    steps:
+
+    - task: UseDotNet@2
+      displayName: 'Use .NET $(dotnetVersion)'
+      inputs:
+        packageType: sdk
+        version: $(dotnetVersion)
+
+    - task: Cache@2
+      displayName: 'Cache NuGet'
+      inputs:
+        key: 'nuget | "$(Agent.OS)" | $(projectPath)'
+        restoreKeys: |
+          nuget | "$(Agent.OS)"
+        path: $(NUGET_PACKAGES)
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Restore'
+      inputs:
+        command: restore
+        projects: $(projectPath)
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Build'
+      inputs:
+        command: build
+        projects: $(projectPath)
+        arguments: '--no-restore --configuration $(buildConfig)'
+
+    - script: |
+        cd src/PeopleFlow.UIAutomation
+        dotnet build --configuration $(buildConfig) --no-restore
+        # Install Playwright using the built-in script
+        chmod +x bin/$(buildConfig)/net8.0/playwright.sh 2>/dev/null || true
+        dotnet tool install --global Microsoft.Playwright.CLI --version 1.44.0 2>/dev/null || true
+        # Use npx as fallback to install browsers
+        npx -y playwright install --with-deps chromium 2>/dev/null || \
+        bash bin/$(buildConfig)/net8.0/playwright.sh install --with-deps chromium 2>/dev/null || \
+        echo "Playwright install attempted"
+      displayName: 'Install Playwright browsers'
+
+    # ── Resolve test filter based on trigger / parameters ──────────────────
+    - script: |
+        BUILD_REASON="$(Build.Reason)"
+        RUN_MODE="${{ parameters.run_mode }}"
+        TAG_FILTER="${{ parameters.tag_filter }}"
+        FEATURE_FILTER="${{ parameters.feature_filter }}"
+
+        if [ "$BUILD_REASON" = "IndividualCI" ] || [ "$BUILD_REASON" = "BatchedCI" ]; then
+          echo "##vso[task.setvariable variable=testFilter]Category=Regression"
+          echo "##vso[task.setvariable variable=suiteLabel]Regression (auto - push to main)"
+        elif [ "$BUILD_REASON" = "PullRequest" ]; then
+          echo "##vso[task.setvariable variable=testFilter]Category=Smoke"
+          echo "##vso[task.setvariable variable=suiteLabel]Smoke (auto - Pull Request)"
+        elif [ "$RUN_MODE" = "Tag" ]; then
+          echo "##vso[task.setvariable variable=testFilter]Category=$TAG_FILTER"
+          echo "##vso[task.setvariable variable=suiteLabel]Tag: $TAG_FILTER"
+        elif [ "$RUN_MODE" = "Feature" ]; then
+          echo "##vso[task.setvariable variable=testFilter]FullyQualifiedName~$FEATURE_FILTER"
+          echo "##vso[task.setvariable variable=suiteLabel]Feature: $FEATURE_FILTER"
+        else
+          echo "##vso[task.setvariable variable=testFilter]"
+          echo "##vso[task.setvariable variable=suiteLabel]All test cases"
+        fi
+      displayName: 'Resolve test filter'
+
+    - script: |
+        echo "====================================="
+        echo " Suite   : $(suiteLabel)"
+        echo " Filter  : $(testFilter)"
+        echo " Headless: ${{ parameters.headless }}"
+        echo " Trigger : $(Build.Reason)"
+        echo " Branch  : $(Build.SourceBranchName)"
+        echo "====================================="
+      displayName: 'Print run config'
+
+    # ── Run tests ──────────────────────────────────────────────────────────
+    - script: |
+        mkdir -p "$(Agent.TempDirectory)/TestResults"
+        FILTER="$(testFilter)"
+
+        export AppSettings__Headless="${{ parameters.headless }}"
+        export AppSettings__BaseUrl="$(appBaseUrl)"
+        export AppSettings__ApiBaseUrl="$(appApiUrl)"
+
+        if [ -n "$FILTER" ]; then
+          dotnet test "$(projectPath)" \
+            --no-build \
+            --configuration "$(buildConfig)" \
+            --filter "$FILTER" \
+            --logger "trx;LogFileName=test-results.trx" \
+            --logger "console;verbosity=normal" \
+            --results-directory "$(Agent.TempDirectory)/TestResults"
+        else
+          dotnet test "$(projectPath)" \
+            --no-build \
+            --configuration "$(buildConfig)" \
+            --logger "trx;LogFileName=test-results.trx" \
+            --logger "console;verbosity=normal" \
+            --results-directory "$(Agent.TempDirectory)/TestResults"
+        fi
+      displayName: 'Run UI Tests — $(suiteLabel)'
+      continueOnError: true
+      name: runTests
+
+    # ── Publish test results ───────────────────────────────────────────────
+    - task: PublishTestResults@2
+      displayName: 'Publish Test Results'
+      condition: always()
+      inputs:
+        testResultsFormat: VSTest
+        testResultsFiles: '$(Agent.TempDirectory)/TestResults/**/*.trx'
+        testRunTitle: 'PeopleFlow UI — $(suiteLabel)'
+        failTaskOnFailedTests: false
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Upload test results artifact'
+      condition: always()
+      inputs:
+        targetPath: '$(Agent.TempDirectory)/TestResults'
+        artifact: 'test-results-$(Build.BuildNumber)'
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Upload screenshots on failure'
+      condition: eq(variables['runTests.result'], 'Failed')
+      inputs:
+        targetPath: 'TestResults/Screenshots'
+        artifact: 'screenshots-$(Build.BuildNumber)'
+
+    # ── Fail stage if tests failed ─────────────────────────────────────────
+    - script: |
+        echo "##vso[task.complete result=Failed;]Tests failed. See test results above."
+      displayName: 'Mark stage failed if tests failed'
+      condition: and(always(), eq(variables['runTests.result'], 'Failed'))
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STAGE 3 — Auto-Revert (only on CI failure on main)
+# ═══════════════════════════════════════════════════════════════════════════
+- stage: AutoRevert
+  displayName: '↩️ Auto-Revert on Failure'
+  dependsOn: Test
+  condition: |
+    and(
+      failed('Test'),
+      or(
+        eq(variables['Build.Reason'], 'IndividualCI'),
+        eq(variables['Build.Reason'], 'BatchedCI')
+      ),
+      eq(variables['Build.SourceBranchName'], 'main')
+    )
+
+  jobs:
+  - job: RevertJob
+    displayName: 'Revert failing commit'
+    pool:
+      vmImage: 'ubuntu-latest'
+
+    steps:
+
+    - checkout: self
+      persistCredentials: true
+      fetchDepth: 10
+
+    - script: |
+        git config user.name  "Azure DevOps Pipeline"
+        git config user.email "ado-pipeline@peopleflow.com"
+      displayName: 'Configure git identity'
+
+    - script: |
+        COMMIT="$BUILD_SOURCEVERSION"
+        MSG=$(git log -1 --pretty=%s "$COMMIT")
+        echo "Failing commit : $COMMIT"
+        echo "Message        : $MSG"
+        echo "##vso[task.setvariable variable=failingMsg]$MSG"
+      displayName: 'Identify failing commit'
+
+    - script: |
+        git revert --no-edit "$BUILD_SOURCEVERSION"
+        git push origin HEAD:main
+        echo "Revert pushed to main successfully"
+      displayName: 'Revert & push'
+
+    - script: |
+        echo "##vso[build.addbuildtag]AUTO-REVERTED"
+        echo "============================================"
+        echo "  PIPELINE AUTO-REVERT SUMMARY"
+        echo "============================================"
+        echo "  Failed commit : $BUILD_SOURCEVERSION"
+        echo "  Message       : $(failingMsg)"
+        echo "  Action        : Reverted and pushed to main"
+        echo "  Next step     : Pipeline re-triggers on push"
+        echo "============================================"
+      displayName: 'Print revert summary'
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STAGE 4 — Summary (always runs)
+# ═══════════════════════════════════════════════════════════════════════════
+- stage: Summary
+  displayName: '📋 Pipeline Summary'
+  dependsOn:
+    - Build
+    - Test
+    - AutoRevert
+  condition: always()
+
+  jobs:
+  - job: SummaryJob
+    displayName: 'Write summary'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - script: |
+        echo "============================================"
+        echo "  PEOPLEFLOW UI AUTOMATION — PIPELINE DONE"
+        echo "============================================"
+        echo "  Pipeline  : $BUILD_BUILDNUMBER"
+        echo "  Branch    : $BUILD_SOURCEBRANCHNAME"
+        echo "  Trigger   : $BUILD_REASON"
+        echo "  Commit    : $BUILD_SOURCEVERSION"
+        echo "  Requested : $BUILD_REQUESTEDFOR"
+        echo "============================================"
+      displayName: 'Pipeline Summary'
+#
+# Triggers:
+#   - Auto: push to main       → runs @Regression suite
+#   - Auto: pull_request       → runs @Smoke suite
+#   - Manual (parameters)      → run by Tag | Feature | Branch
+#
+# On failure (CI run on main):
+#   - Auto-reverts last commit
+#   - Re-queues pipeline to verify green state
+# =============================================================================
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    exclude:
+      - README.md
+      - docs/**
+
+pr:
+  branches:
+    include:
+      - main
+  drafts: false
+
+# ── Manual run parameters ────────────────────────────────────────────────────
+parameters:
+  - name: run_mode
+    displayName: 'Filter tests by'
+    type: string
+    default: 'Tag'
+    values:
+      - Tag
+      - Feature
+      - All
+
+  - name: tag_filter
+    displayName: 'Tag (when run_mode=Tag). E.g: Smoke | Regression | UI | API | Integration | US-294 | TC-294-01'
+    type: string
+    default: 'Regression'
+
+  - name: feature_filter
+    displayName: 'Feature (when run_mode=Feature). E.g: Login | Dashboard | EmployeeList | EmployeeCRUD | LeaveManagement | Recruitment'
+    type: string
+    default: 'Login'
+
+  - name: headless
+    displayName: 'Run browser headless?'
+    type: boolean
+    default: true
+
+# ── Variables ────────────────────────────────────────────────────────────────
+variables:
+  dotnetVersion: '8.0.x'
+  projectPath: 'src/PeopleFlow.UIAutomation/PeopleFlow.UIAutomation.csproj'
+  buildConfig: 'Release'
+  appBaseUrl: 'http://localhost:80'
+  appApiUrl: 'http://localhost:3000/api'
   # Set in ADO Library → Variable Group → "PeopleFlow-Secrets"
   # patToken: $(PAT_EXT_TOKEN)
 
