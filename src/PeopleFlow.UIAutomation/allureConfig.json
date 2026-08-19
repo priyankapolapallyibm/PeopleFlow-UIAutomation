@@ -1,0 +1,16 @@
+{
+  "$schema": "https://fasterxml.com/allure/allure-config-schema.json",
+  "allure": {
+    "directory": "allure-results",
+    "links": [
+      {
+        "type": "tms",
+        "urlTemplate": "https://dev.azure.com/squaresquad26/PeopleFlowNew/_testPlans/execute?planId=362&suiteId={}"
+      },
+      {
+        "type": "issue",
+        "urlTemplate": "https://dev.azure.com/squaresquad26/PeopleFlowNew/_workitems/edit/{}"
+      }
+    ]
+  }
+}

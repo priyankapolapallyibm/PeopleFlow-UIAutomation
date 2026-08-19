@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<SpecFlow>
+  <bindingCulture name="en-US" />
+  <language feature="en-US" />
+  <stepAssemblies>
+    <stepAssembly assembly="PeopleFlow.UIAutomation" />
+  </stepAssemblies>
+</SpecFlow>

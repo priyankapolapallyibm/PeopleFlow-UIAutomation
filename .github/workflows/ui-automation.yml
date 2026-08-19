@@ -1,0 +1,56 @@
+name: PeopleFlow UI Automation
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: 'Run specific tags (e.g. @Smoke or @US-294)'
+        default: '@Smoke'
+
+jobs:
+  ui-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore src/PeopleFlow.UIAutomation/PeopleFlow.UIAutomation.csproj
+
+      - name: Build
+        run: dotnet build src/PeopleFlow.UIAutomation/PeopleFlow.UIAutomation.csproj --no-restore
+
+      - name: Install Playwright browsers
+        run: |
+          cd src/PeopleFlow.UIAutomation
+          pwsh bin/Debug/net8.0/playwright.ps1 install --with-deps chromium
+
+      - name: Run UI Tests
+        env:
+          AppSettings__Headless: true
+          AppSettings__BaseUrl: http://localhost:80
+          AppSettings__ApiBaseUrl: http://localhost:3000/api
+        run: |
+          dotnet test src/PeopleFlow.UIAutomation/PeopleFlow.UIAutomation.csproj \
+            --no-build \
+            --logger "trx;LogFileName=test-results.trx" \
+            --filter "Category=${{ github.event.inputs.tags || 'Smoke' }}" \
+            -e AppSettings__Headless=true
+
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: |
+            TestResults/
+            allure-results/

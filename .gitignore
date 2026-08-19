@@ -1,0 +1,15 @@
+bin/
+obj/
+TestResults/
+allure-results/
+allure-report/
+*.user
+.vs/
+*.suo
+.idea/
+node_modules/
+playwright-report/
+test-results/
+*.log
+screenshots/
+videos/
