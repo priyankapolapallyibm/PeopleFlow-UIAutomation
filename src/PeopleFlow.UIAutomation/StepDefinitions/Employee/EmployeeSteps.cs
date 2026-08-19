@@ -1,5 +1,3 @@
-using FluentAssertions;
-using Microsoft.Playwright;
 using PeopleFlow.UIAutomation.Pages.Employee;
 using PeopleFlow.UIAutomation.ApiClients;
 

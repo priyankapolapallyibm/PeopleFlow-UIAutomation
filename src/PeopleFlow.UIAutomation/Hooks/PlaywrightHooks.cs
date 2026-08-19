@@ -1,4 +1,3 @@
-using Microsoft.Playwright;
 using PeopleFlow.UIAutomation.Config;
 using PeopleFlow.UIAutomation.Helpers;
 
