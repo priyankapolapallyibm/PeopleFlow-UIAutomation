@@ -16,13 +16,13 @@ Feature: Employee List UI
     And I navigate to the Employee List page
 
   # TestID: TC-303-01
-  @TC-303-01 @Smoke
+  @TC-303-01 @Smoke @Regression
   Scenario: TC-303-01 Admin opens Employee List page and sees all employees in table
     Then I should see the employee list table
     And the table should contain at least one employee record
 
   # TestID: TC-303-02
-  @TC-303-02
+  @TC-303-02 @Regression
   Scenario: TC-303-02 Admin searches employee by name and filtered results appear
     When I enter "John" in the employee name search field
     And I click the Search button

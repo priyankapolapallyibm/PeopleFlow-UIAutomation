@@ -15,14 +15,14 @@ Feature: Login UI
     Given I navigate to the PeopleFlow login page
 
   # TC-289-01 | TestID: TC-294-01
-  @TC-294-01 @Smoke
+  @TC-294-01 @Smoke @Regression
   Scenario: TC-294-01 Login page loads with username and password fields
     Then I should see the username input field
     And I should see the password input field
     And I should see the Login button
 
   # TC-289-02 | TestID: TC-294-02
-  @TC-294-02 @Smoke
+  @TC-294-02 @Smoke @Regression
   Scenario: TC-294-02 Admin logs in with valid credentials and lands on Dashboard
     When I enter username "admin" in the Username field
     And I enter password "admin123" in the Password field
@@ -31,7 +31,7 @@ Feature: Login UI
     And I should see the navigation menu
 
   # TC-289-03 | TestID: TC-294-03
-  @TC-294-03
+  @TC-294-03 @Regression
   Scenario: TC-294-03 Login fails with incorrect password and shows error
     When I enter username "admin" in the Username field
     And I enter password "wrongpassword" in the Password field
@@ -47,7 +47,7 @@ Feature: Login UI
     Then I should see a required field validation error
 
   # TC-289-05 | TestID: TC-294-05
-  @TC-294-05
+  @TC-294-05 @Regression
   Scenario Outline: TC-294-05 Multiple user roles can log in successfully
     When I enter username "<username>" in the Username field
     And I enter password "<password>" in the Password field

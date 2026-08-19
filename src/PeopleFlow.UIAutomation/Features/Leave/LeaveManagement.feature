@@ -15,7 +15,7 @@ Feature: Leave Management UI
     Given I am logged in as "admin" with password "admin123"
 
   # TestID: TC-308-01
-  @TC-308-01 @Smoke
+  @TC-308-01 @Smoke @Regression
   Scenario: TC-308-01 Employee opens Apply Leave page and sees leave form
     When I navigate to the Apply Leave page
     Then I should see the Leave Type dropdown
@@ -24,7 +24,7 @@ Feature: Leave Management UI
     And I should see the Apply button
 
   # TestID: TC-308-02
-  @TC-308-02
+  @TC-308-02 @Regression
   Scenario: TC-308-02 Employee applies for Sick leave from 2026-09-01 to 2026-09-03
     When I navigate to the Apply Leave page
     And I select leave type "Sick Leave" from the Leave Type dropdown
@@ -34,7 +34,7 @@ Feature: Leave Management UI
     Then I should see a leave application success message
 
   # TestID: TC-308-03
-  @TC-308-03
+  @TC-308-03 @Regression
   Scenario: TC-308-03 Employee cannot apply leave with end date before start date
     When I navigate to the Apply Leave page
     And I select leave type "Sick Leave" from the Leave Type dropdown
@@ -44,7 +44,7 @@ Feature: Leave Management UI
     Then I should see a date validation error message
 
   # TestID: TC-308-04
-  @TC-308-04
+  @TC-308-04 @Regression
   Scenario: TC-308-04 Employee sees pending leave request in Leave History table
     When I navigate to the My Leave page
     Then the leave history table should be visible

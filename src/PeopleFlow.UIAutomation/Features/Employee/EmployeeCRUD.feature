@@ -16,7 +16,7 @@ Feature: Employee CRUD UI
     And I navigate to the Employee List page
 
   # TestID: TC-304-01
-  @TC-304-01 @Smoke
+  @TC-304-01 @Smoke @Regression
   Scenario: TC-304-01 Admin clicks Add Employee button and form opens with required fields
     When I click the Add Employee button
     Then I should see the Add Employee form
@@ -24,7 +24,7 @@ Feature: Employee CRUD UI
     And the Last Name field should be visible
 
   # TestID: TC-304-02
-  @TC-304-02
+  @TC-304-02 @Regression
   Scenario: TC-304-02 Admin fills Employee form with valid data and saves successfully
     When I click the Add Employee button
     And I enter first name "Alice" in the First Name field
@@ -34,7 +34,7 @@ Feature: Employee CRUD UI
     And the new employee "Alice Walker" should appear in the employee list
 
   # TestID: TC-304-03
-  @TC-304-03
+  @TC-304-03 @Regression
   Scenario: TC-304-03 Admin edits an existing employee and updates phone number
     When I click Edit on the first employee row
     And I update the phone number to "9876543210"
@@ -42,7 +42,7 @@ Feature: Employee CRUD UI
     Then I should see the success notification
 
   # TestID: TC-304-04
-  @TC-304-04
+  @TC-304-04 @Regression
   Scenario: TC-304-04 Admin deletes an employee and confirmation dialog appears
     When I click Delete on the first employee row
     Then I should see the delete confirmation dialog

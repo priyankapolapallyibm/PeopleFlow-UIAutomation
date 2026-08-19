@@ -16,19 +16,19 @@ Feature: Dashboard UI
     And I am on the Dashboard page
 
   # TestID: TC-296-01
-  @TC-296-01 @Smoke
+  @TC-296-01 @Smoke @Regression
   Scenario: TC-296-01 Dashboard loads with all KPI widgets visible after login
     Then I should see the KPI widget panel
     And I should see the navigation menu with all module links
 
   # TestID: TC-296-02
-  @TC-296-02
+  @TC-296-02 @Regression
   Scenario: TC-296-02 Dashboard KPI cards show correct counts for Employees and Leaves
     Then the employee count widget should display a numeric value
     And the leave balance widget should display a numeric value
 
   # TestID: TC-296-03
-  @TC-296-03
+  @TC-296-03 @Regression
   Scenario: TC-296-03 Dashboard navigation menu links navigate to correct modules
     When I click on the "PIM" menu link
     Then I should be on the Employee List page
