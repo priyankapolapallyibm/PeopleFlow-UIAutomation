@@ -1,8 +1,10 @@
-<?xml version="1.0" encoding="utf-8"?>
-<SpecFlow>
-  <bindingCulture name="en-US" />
-  <language feature="en-US" />
-  <stepAssemblies>
-    <stepAssembly assembly="PeopleFlow.UIAutomation" />
-  </stepAssemblies>
-</SpecFlow>
+{
+  "$schema": "https://specflow.org/specflow.json.schema.json",
+  "language": {
+    "feature": "en-US",
+    "binding": "en-US"
+  },
+  "bindingCulture": {
+    "name": "en-US"
+  }
+}
