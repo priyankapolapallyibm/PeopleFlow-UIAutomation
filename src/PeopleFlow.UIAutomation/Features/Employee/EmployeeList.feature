@@ -29,7 +29,7 @@ Feature: Employee List UI
     Then the employee table should show only records matching "John"
 
   # TestID: TC-303-03
-  @TC-303-03
+  @TC-303-03 @Regression
   Scenario: TC-303-03 No records found message appears for invalid search
     When I enter "ZZZNONEXISTENT999" in the employee name search field
     And I click the Search button

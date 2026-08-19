@@ -39,7 +39,7 @@ Feature: Login UI
     Then I should see the error message "Invalid credentials"
 
   # TC-289-04 | TestID: TC-294-04
-  @TC-294-04
+  @TC-294-04 @Regression
   Scenario: TC-294-04 Login fails with empty username field
     When I enter username "" in the Username field
     And I enter password "admin123" in the Password field
